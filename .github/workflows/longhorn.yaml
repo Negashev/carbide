@@ -42,7 +42,7 @@ jobs:
                 name: longhorn-airgap-images
             spec:
                 images:
-            $(curl -sSfL https://raw.githubusercontent.com/longhorn/longhorn/${{ matrix.repo_version }}/deploy/longhorn-images.txt | sed 's/^/    - name: /')
+            $(curl -sSfL https://raw.githubusercontent.com/longhorn/longhorn/v${{ matrix.repo_version }}/deploy/longhorn-images.txt | sed 's/^/    - name: /')
             EOF
       - name: load to GitHub Container Registry
         run: |
