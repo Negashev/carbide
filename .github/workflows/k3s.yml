@@ -30,6 +30,9 @@ jobs:
           EOF
 
       - name: load to GitHub Container Registry
+        uses: oras-project/setup-oras@v1
+        with:
+          version: 1.0.0
         run: |
           REPO_VERSION=${{ matrix.repo_version }}
           MANIFEST_VERSION="${REPO_VERSION//+/-}"
