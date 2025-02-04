@@ -41,6 +41,19 @@ jobs:
           spec:
             images:
           $(curl -sSfL https://github.com/k3s-io/k3s/releases/download/${{ matrix.repo_version }}/k3s-images.txt | sed 's/^/    - name: /')
+          ---
+          apiVersion: content.hauler.cattle.io/v1alpha1
+          kind: Files
+          metadata:
+            name: k3s-files-${{ matrix.repo_version }}
+          spec:
+            files:
+              - path: https://github.com/k3s-io/k3s/releases/download/${{ matrix.repo_version }}/k3s-airgap-images-amd64.tar.zst
+                name: k3s-airgap-images-amd64.tar.zst
+              - path: https://github.com/k3s-io/k3s/releases/download/${{ matrix.repo_version }}/k3s-airgap-images-arm.tar.zst
+                name: k3s-airgap-images-arm.tar.zst
+              - path: https://github.com/k3s-io/k3s/releases/download/${{ matrix.repo_version }}/k3s-airgap-images-arm64.tar.zst
+                name: k3s-airgap-images-arm64.tar.zst
           EOF
       - name: load to GitHub Container Registry
         run: |
