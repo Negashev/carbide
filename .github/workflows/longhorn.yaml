@@ -1,0 +1,52 @@
+name: Fetch and Upload Longhorn Images and Charts
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  longhorn-fetch:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        repo_version:
+        - 1.8.0
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+      - name: Setup ORAS
+        uses: oras-project/setup-oras@v1
+      - id: string
+        uses: ASzc/change-string-case-action@v6
+        with:
+          string: ${{ github.repository }}
+      - name: hauler images
+        run: |
+            cat <<EOF > longhorn-manifest.yaml
+            apiVersion: content.hauler.cattle.io/v1alpha1
+            kind: Charts
+            metadata:
+                name: longhorn-airgap-charts
+            spec:
+                charts:
+                    - name: longhorn
+                      repoURL: https://charts.longhorn.io
+                      version: ${{ matrix.repo_version }}
+            ---
+            apiVersion: content.hauler.cattle.io/v1alpha1
+            kind: Images
+            metadata:
+                name: longhorn-airgap-images
+            spec:
+                images:
+            $(curl -sSfL https://raw.githubusercontent.com/longhorn/longhorn/${{ matrix.repo_version }}/deploy/longhorn-images.txt | sed 's/^/    - name: /')
+            EOF
+      - name: load to GitHub Container Registry
+        run: |
+          REPO_VERSION=${{ matrix.repo_version }}
+          MANIFEST_VERSION="${REPO_VERSION//+/-}"
+          echo ${{ secrets.GITHUB_TOKEN }} | oras login --username ${{ github.repository_owner }} --password-stdin ghcr.io
+          oras push ghcr.io/${{ steps.string.outputs.lowercase }}/hauler/longhorn-manifest.yaml:$MANIFEST_VERSION longhorn-manifest.yaml
