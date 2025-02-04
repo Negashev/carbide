@@ -13,9 +13,10 @@ jobs:
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
-        
-      - name: Login GitHub Container Registry
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
+      - name: Setup ORAS
+        uses: oras-project/setup-oras@v1
+        with:
+          oras-version: 1.0.0
 
       - name: hauler images
         run: |
@@ -29,9 +30,6 @@ jobs:
           $(curl -sSfL https://github.com/k3s-io/k3s/releases/download/${{ matrix.repo_version }}/k3s-images.txt | sed 's/^/    - name: /')
           EOF
 
-      - uses: oras-project/setup-oras@v1
-        with:
-          version: 1.0.0
       - name: load to GitHub Container Registry
         run: |
           REPO_VERSION=${{ matrix.repo_version }}
