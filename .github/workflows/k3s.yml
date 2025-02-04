@@ -39,4 +39,5 @@ jobs:
         run: |
           REPO_VERSION=${{ matrix.repo_version }}
           MANIFEST_VERSION="${REPO_VERSION//+/-}"
+          echo ${{ secrets.GITHUB_TOKEN }} | oras login --username ${{ github.repository_owner }} --password-stdin ghcr.io
           oras push ghcr.io/${{ steps.string.outputs.lowercase }}/hauler/k3s-manifest.yaml:$MANIFEST_VERSION k3s-manifest.yaml
