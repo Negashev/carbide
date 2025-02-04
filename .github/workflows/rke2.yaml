@@ -58,20 +58,28 @@ jobs:
               name: install.sh
             - path: https://github.com/rancher/rke2/releases/download/${{ matrix.repo_version }}/rke2-images.linux-amd64.tar.zst
               name: rke2-images.linux-amd64.tar.zst
+              platform: linux/amd64
             - path: https://github.com/rancher/rke2/releases/download/${{ matrix.repo_version }}/rke2.linux-amd64.tar.gz
               name: rke2.linux-amd64.tar.gz
+              platform: linux/amd64
             - path: https://github.com/rancher/rke2/releases/download/${{ matrix.repo_version }}/sha256sum-amd64.txt
               name: sha256sum-amd64.txt
+              platform: linux/amd64
             - path: https://github.com/rancher/rke2/releases/download/${{ matrix.repo_version }}/rke2.linux-amd64
               name: rke2.linux-amd64
+              platform: linux/amd64
             - path: https://github.com/rancher/rke2/releases/download/${{ matrix.repo_version }}/rke2-images.linux-arm64.tar.zst
               name: rke2-images.linux-arm64.tar.zst
+              platform: linux/arm64
             - path: https://github.com/rancher/rke2/releases/download/${{ matrix.repo_version }}/rke2.linux-arm64.tar.gz
               name: rke2.linux-arm64.tar.gz
+              platform: linux/arm64
             - path: https://github.com/rancher/rke2/releases/download/${{ matrix.repo_version }}/sha256sum-arm64.txt
               name: sha256sum-arm64.txt
+              platform: linux/arm64
             - path: https://github.com/rancher/rke2/releases/download/${{ matrix.repo_version }}/rke2.linux-arm64
               name: rke2.linux-arm64
+              platform: linux/arm64
           EOF
       - name: load to GitHub Container Registry
         run: |
