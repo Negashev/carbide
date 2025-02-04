@@ -5,7 +5,7 @@ on:
     branches: [ "main" ]
 
 jobs:
-  fetch-images:
+  k3s-fetch:
     runs-on: ubuntu-latest
     permissions:
       contents: read
