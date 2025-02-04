@@ -17,7 +17,10 @@ jobs:
         uses: oras-project/setup-oras@v1
         with:
           oras-version: 1.0.0
-
+      - id: string
+        uses: ASzc/change-string-case-action@v6
+        with:
+          string: ${{ github.repository }}
       - name: hauler images
         run: |
           cat <<EOF > k3s-manifest.yaml
@@ -29,9 +32,8 @@ jobs:
             images:
           $(curl -sSfL https://github.com/k3s-io/k3s/releases/download/${{ matrix.repo_version }}/k3s-images.txt | sed 's/^/    - name: /')
           EOF
-
       - name: load to GitHub Container Registry
         run: |
           REPO_VERSION=${{ matrix.repo_version }}
           MANIFEST_VERSION="${REPO_VERSION//+/-}"
-          oras push ghcr.io/${{ lowercase(github.repository) }}/hauler/k3s-manifest.yaml:$MANIFEST_VERSION k3s-manifest.yaml
+          oras push ghcr.io/${{ steps.string.outputs.lowercase }}/hauler/k3s-manifest.yaml:$MANIFEST_VERSION k3s-manifest.yaml
