@@ -1,4 +1,4 @@
-name: Fetch and Upload K3s Images
+name: Fetch and Upload K3s Images and Files
 
 on:
   push:
