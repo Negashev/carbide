@@ -48,6 +48,12 @@ jobs:
             name: k3s-files-${{ matrix.repo_version }}
           spec:
             files:
+              - path: https://github.com/k3s-io/k3s/releases/download/${{ matrix.repo_version }}/k3s
+                name: k3s
+              - path: https://github.com/k3s-io/k3s/releases/download/${{ matrix.repo_version }}/k3s-arm64
+                name: k3s-arm64
+              - path: https://github.com/k3s-io/k3s/releases/download/${{ matrix.repo_version }}/k3s-armhf
+                name: k3s-armhf
               - path: https://github.com/k3s-io/k3s/releases/download/${{ matrix.repo_version }}/k3s-airgap-images-amd64.tar.zst
                 name: k3s-airgap-images-amd64.tar.zst
               - path: https://github.com/k3s-io/k3s/releases/download/${{ matrix.repo_version }}/k3s-airgap-images-arm.tar.zst
