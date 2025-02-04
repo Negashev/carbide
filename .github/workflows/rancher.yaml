@@ -58,7 +58,7 @@ jobs:
                 name: rancher-airgap-images
             spec:
                 images:
-            $(curl -sSfL https://github.com/rancher/rancher/releases/download/${{ matrix.repo_version }}/rancher-images.txt | sed 's/^/    - name: /')
+            $(curl -sSfL https://github.com/rancher/rancher/releases/download/v${{ matrix.repo_version }}/rancher-images.txt | sed 's/^/    - name: /')
             EOF
       - name: load to GitHub Container Registry
         run: |
