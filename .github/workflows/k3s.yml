@@ -12,7 +12,14 @@ jobs:
       packages: write
     strategy:
       matrix:
-        repo_version: ["v1.28.3+k3s1", "v1.27.7+k3s1"]
+        repo_version:
+        - v1.32.1+k3s1
+        - v1.31.5+k3s1
+        - v1.30.9+k3s1
+        - v1.29.13+k3s1
+        - v1.29.13+k3s1
+        - v1.28.3+k3s1
+        - v1.27.7+k3s1
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
