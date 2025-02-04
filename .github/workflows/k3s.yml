@@ -34,4 +34,4 @@ jobs:
         run: |
           REPO_VERSION=${{ matrix.repo_version }}
           MANIFEST_VERSION="${REPO_VERSION//+/-}"
-          oras push ghcr.io/${{ github.repository }}/hauler/k3s-manifest.yaml:$MANIFEST_VERSION k3s-manifest.yaml
+          oras push ghcr.io/${{ lowercase(github.repository) }}/hauler/k3s-manifest.yaml:$MANIFEST_VERSION k3s-manifest.yaml
