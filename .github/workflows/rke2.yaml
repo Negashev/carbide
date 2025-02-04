@@ -1,0 +1,69 @@
+name: Fetch and Upload rke2 Images and Files
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  rke2-fetch:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        repo_version:
+        - v1.31.3+rke2r1
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+      - name: Setup ORAS
+        uses: oras-project/setup-oras@v1
+        with:
+          oras-version: 1.0.0
+      - id: string
+        uses: ASzc/change-string-case-action@v6
+        with:
+          string: ${{ github.repository }}
+      - name: hauler images
+        run: |
+          cat <<EOF > rke2-manifest.yaml
+          apiVersion: content.hauler.cattle.io/v1alpha1
+          kind: Images
+          metadata:
+            name: rke2-images-${{ matrix.repo_version }}
+          spec:
+            images:
+          $(curl -sSfL https://github.com/rancher/rke2/releases/download/${{ matrix.repo_version }}/rke2-images-all.linux-amd64.txt | sed 's/^/    - name: /')
+          ---
+          apiVersion: content.hauler.cattle.io/v1alpha1
+          kind: Files
+          metadata:
+            name: rke2-files-${{ matrix.repo_version }}
+          spec:
+            files:
+            - path: https://raw.githubusercontent.com/rancher/rke2/refs/tags/${{ matrix.repo_version }}/install.sh
+              name: install.sh
+            - path: https://github.com/rancher/rke2/releases/download/${{ matrix.repo_version }}/rke2-images.linux-amd64.tar.zst
+              name: rke2-images.linux-amd64.tar.zst
+            - path: https://github.com/rancher/rke2/releases/download/${{ matrix.repo_version }}/rke2.linux-amd64.tar.gz
+              name: rke2.linux-amd64.tar.gz
+            - path: https://github.com/rancher/rke2/releases/download/${{ matrix.repo_version }}/sha256sum-amd64.txt
+              name: sha256sum-amd64.txt
+            - path: https://github.com/rancher/rke2/releases/download/${{ matrix.repo_version }}/rke2.linux-amd64
+              name: rke2.linux-amd64
+            - path: https://github.com/rancher/rke2/releases/download/${{ matrix.repo_version }}/rke2-images.linux-arm64.tar.zst
+              name: rke2-images.linux-arm64.tar.zst
+            - path: https://github.com/rancher/rke2/releases/download/${{ matrix.repo_version }}/rke2.linux-arm64.tar.gz
+              name: rke2.linux-arm64.tar.gz
+            - path: https://github.com/rancher/rke2/releases/download/${{ matrix.repo_version }}/sha256sum-arm64.txt
+              name: sha256sum-arm64.txt
+            - path: https://github.com/rancher/rke2/releases/download/${{ matrix.repo_version }}/rke2.linux-arm64
+              name: rke2.linux-arm64
+          EOF
+      - name: load to GitHub Container Registry
+        run: |
+          REPO_VERSION=${{ matrix.repo_version }}
+          MANIFEST_VERSION="${REPO_VERSION//+/-}"
+          echo ${{ secrets.GITHUB_TOKEN }} | oras login --username ${{ github.repository_owner }} --password-stdin ghcr.io
+          oras push ghcr.io/${{ steps.string.outputs.lowercase }}/hauler/rke2-manifest.yaml:$MANIFEST_VERSION rke2-manifest.yaml
