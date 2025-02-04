@@ -1,0 +1,36 @@
+name: Fetch and Upload K3s Images
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  fetch-images:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        repo_version: ["v1.28.3+k3s1", "v1.27.7+k3s1"]
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        
+      - name: Login GitHub Container Registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $GITHUB_ACTOR --password-stdin
+
+      - name: hauler images
+        run: |
+          cat <<EOF > k3s-manifest.yaml
+          apiVersion: content.hauler.cattle.io/v1alpha1
+          kind: Images
+          metadata:
+            name: k3s-images-${{ matrix.repo_version }}
+          spec:
+            images:
+          $(curl -sSfL https://github.com/k3s-io/k3s/releases/download/${{ matrix.repo_version }}/k3s-images.txt | sed 's/^/    - name: /')
+          EOF
+
+      - name: load to GitHub Container Registry
+        run: |
+          REPO_VERSION=${{ matrix.repo_version }}
+          MANIFEST_VERSION="${REPO_VERSION//+/-}"
+          oras push ghcr.io/${{ github.repository }}/hauler/k3s-manifest.yaml:$MANIFEST_VERSION k3s-manifest.yaml
