@@ -7,6 +7,9 @@ on:
 jobs:
   fetch-images:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     strategy:
       matrix:
         repo_version: ["v1.28.3+k3s1", "v1.27.7+k3s1"]
