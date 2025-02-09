@@ -1,5 +1,0 @@
-fastapi[standard]
-aiohttp
-pyyaml
-uvicorn
-minio
