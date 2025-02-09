@@ -1,6 +1,7 @@
 import io
 import os
 import json
+from itertools import chain
 
 import yaml
 from hashlib import sha256
@@ -146,7 +147,7 @@ def find_images(data, results=None):
     # Если data — словарь, проверяем его ключи и значения
     if isinstance(data, dict):
         for key, value in data.items():
-            if key == 'image':
+            if key == 'image' and type(value) == str:
                 results.append(value)
             # Рекурсивно проверяем значение, если оно словарь или список
             find_images(value, results)
@@ -165,25 +166,27 @@ async def download_file(url: str) -> bytes:
                 raise HTTPException(status_code=404, detail=f"File not found: {url}")
             return await response.read()
 
-async def generate_json(name, kind, data, tag):
+async def generate_json(name, kind, data, tag, parse_tag=True):
     spec_type = kind.lower()
     spec_name = name
     spec_data = []
+    if parse_tag:
+        tag = tag.replace("-", "+")
     if spec_type == "charts":
         for item in data:
             # replace {version} if exist
-            item["version"] = item["version"].format(version=tag.replace("-", "+"))
+            item["version"] = item["version"].format(version=tag)
             spec_data.append(item)
     if spec_type == "files":
         for item in data:
             replace_item = item
-            replace_item['path'] = item['path'].format(version=tag.replace("-", "+"))
+            replace_item['path'] = item['path'].format(version=tag)
             spec_data.append(replace_item)
     if spec_type == "images-list":
         kind = "Images"
         spec_type = "images"
         for item in data:
-            url = item["url"].format(version=tag.replace("-", "+"))
+            url = item["url"].format(version=tag)
             text = await download_file(url)
             images = text.decode("utf-8").split('\n')
             for image in images:
@@ -224,6 +227,14 @@ def get_hauler(json_array):
     data = '---\n'.join(yaml_data)
     return data
 
+def parse_helm_url(helm_url_with_version):
+        repo = helm_url_with_version[len("chart--"):]
+        # get last element of url
+        repoUrlSplit = repo.split("--")
+        version = repoUrlSplit[-1]
+        helmRepoUrl = "/".join(repoUrlSplit[0:-1])
+        return helmRepoUrl, version
+
 
 @app.get("/")
 @app.get("/v2/")
@@ -233,15 +244,32 @@ async def root():
 
 @app.get("/v2/hauler/{repo}-manifest.yaml/manifests/{tag}")
 async def get_manifest(repo: str, tag: str):
-    if tag.startswith("sha256"):
-        raise HTTPException(status_code=404, detail="Manifest not found")
     # check if project exist
     json_array = []
-    if repo in PROJECTS.keys():
-        # get all kind
-        for kind in PROJECTS[repo].keys():
-            json_data = await generate_json(repo, kind, PROJECTS[repo][kind], tag)
-            json_array.append(json_data)
+    if tag.startswith("sha256"):
+        raise  HTTPException(status_code=404, detail="Manifest not found")
+    elif tag.startswith("chart--"):
+        helmRepoUrl, version = parse_helm_url(tag)
+        json_data = await generate_json(repo, "Charts",
+            [{
+                "repoURL": "http://" + helmRepoUrl,
+                "name": repo,
+                "version": version
+            }], version, False)
+        json_array.append(json_data)
+        json_data = await generate_json(repo, "Charts-images",
+            [{
+                "repoURL": "http://" + helmRepoUrl,
+                "name": repo,
+                "version": version
+            }], version, False)
+        json_array.append(json_data)
+    else:
+        if repo in PROJECTS.keys():
+            # get all kind
+            for kind in PROJECTS[repo].keys():
+                json_data = await generate_json(repo, kind, PROJECTS[repo][kind], tag)
+                json_array.append(json_data)
     if not json_array:
         raise HTTPException(status_code=404, detail="Manifest not found")
     body = get_hauler(json_array)
