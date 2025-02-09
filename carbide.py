@@ -412,4 +412,4 @@ async def get_blob(repo: str, blob_id: str):
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
     check_bucket(OSBucketName)
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8888")))
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8080")))
