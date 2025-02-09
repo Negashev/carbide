@@ -1,20 +1,16 @@
 import io
 import os
-import re
-import gzip
-import tarfile
-from io import BytesIO
 import json
-from typing import BinaryIO
 
 import yaml
 from hashlib import sha256
 import logging
 
+from pyhelm3 import Client as Helm3Client
 from minio import Minio
 import uvicorn
 import aiohttp
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import Response
 
 PROJECTS = {
@@ -114,6 +110,8 @@ OSClient = Minio(os.getenv("MINIO_ENDPOINT", "storage.yandexcloud.net"),
     secure=os.getenv("MINIO_SECURE", True),
 )
 
+helmClient = Helm3Client()
+
 OSBucketName = os.getenv("MINIO_BUCKET_NAME", "carbide")
 
 # Make the bucket if it doesn't exist.
@@ -137,119 +135,28 @@ def get_object(key):
             bucket_name=OSBucketName,
             object_name=key
     )
+
 app = FastAPI()
 
 
-async def check_docker_image_exists(image_str: str, username: str = None, password: str = None) -> bool:
+def find_images(data, results=None):
+    if results is None:
+        results = []
 
-    def is_registry(s: str) -> bool:
-        return ':' in s or '.' in s or s == 'localhost'
+    # Если data — словарь, проверяем его ключи и значения
+    if isinstance(data, dict):
+        for key, value in data.items():
+            if key == 'image':
+                results.append(value)
+            # Рекурсивно проверяем значение, если оно словарь или список
+            find_images(value, results)
 
-    def parse_image(image_str: str) -> tuple:
-        if ':' in image_str:
-            image_part, tag = image_str.rsplit(':', 1)
-        else:
-            image_part, tag = image_str, 'latest'
+    # Если data — список, проверяем каждый элемент
+    elif isinstance(data, list):
+        for item in data:
+            find_images(item, results)
 
-        parts = image_part.split('/', 1)
-        if len(parts) == 1 or not is_registry(parts[0]):
-            registry = 'docker.io'
-            image_name = image_part
-        else:
-            registry, image_name = parts
-
-        if registry == 'docker.io' and '/' not in image_name:
-            image_name = f'library/{image_name}'
-
-        if registry == 'docker.io':
-            registry_url = 'https://registry-1.docker.io'
-        elif ':' in registry or registry.startswith('localhost'):
-            registry_url = f'http://{registry}' if registry.startswith('localhost') else f'https://{registry}'
-        else:
-            registry_url = f'https://{registry}'
-
-        return registry_url, image_name, tag
-
-    registry_url, image_name, tag = parse_image(image_str)
-    url = f"{registry_url}/v2/{image_name}/manifests/{tag}"
-    headers = {'Accept': 'application/vnd.docker.distribution.manifest.v2+json'}
-
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers,
-                                   auth=aiohttp.BasicAuth(username, password) if username else None) as response:
-                if response.status == 401 and 'Www-Authenticate' in response.headers:
-                    auth_header = response.headers['Www-Authenticate']
-                    if auth_header.startswith('Bearer '):
-                        auth_params = {}
-                        for part in auth_header[7:].split(','):
-                            key, value = part.strip().split('=', 1)
-                            auth_params[key] = value.strip('"')
-
-                        token_url = auth_params['realm']
-                        async with session.get(
-                                token_url,
-                                params={
-                                    'service': auth_params.get('service', ''),
-                                    'scope': auth_params.get('scope', '')
-                                },
-                                auth=aiohttp.BasicAuth(username, password) if username else None
-                        ) as token_response:
-                            token_response.raise_for_status()
-                            token = (await token_response.json())['token']
-
-                        headers['Authorization'] = f'Bearer {token}'
-                        async with session.get(url, headers=headers) as final_response:
-                            return final_response.status == 200
-
-                return response.status == 200
-
-    except (aiohttp.ClientError, ValueError, KeyError):
-        return False
-
-def find_image_tag_pairs(content):
-    pairs = []
-    pattern = re.compile(
-        r'(?i)(repository|image|tag|version):[ ?]([^\s]+)',
-        flags=re.IGNORECASE
-    )
-    pairs = []
-    try:
-        text = content.decode('utf-8')
-    except UnicodeDecodeError:
-        return pairs
-
-    images = []
-    tags = []
-
-    # Search all matches
-    matches = pattern.findall(text)
-    for key, value in matches:
-        if key.lower() == 'image' and value[0].isalpha():
-            images.append(value)
-        if key.lower() == 'repository' and value[0].isalpha():
-            images.append(value)
-        if key.lower() == 'version':
-            tags.append(value)
-        elif key.lower() == 'tag':
-            tags.append(value)
-
-    return images, tags
-
-def extract_tgz_in_memory(tgz_data: bytes) -> dict:
-    compressed_buffer = BytesIO(tgz_data)
-
-    # unpack GZIP and read TAR
-    with gzip.open(compressed_buffer, 'rb') as gz_file:
-        with tarfile.open(fileobj=gz_file, mode='r:*') as tar:
-            file_contents = {}
-
-            for member in tar.getmembers():
-                if member.isfile():  # Пропускаем директории и другие объекты
-                    file = tar.extractfile(member)
-                    if file:
-                        file_contents[member.name] = file.read()
-            return file_contents
+    return results
 
 async def download_file(url: str) -> bytes:
     async with aiohttp.ClientSession() as session:
@@ -284,52 +191,19 @@ async def generate_json(name, kind, data, tag):
                     spec_data.append({"name": image, "platform": item["platform"]})
             spec_name = spec_name + "-" + item["platform"]
     if spec_type == "charts-images":
-        # TODO create better solution for helm template :)
         kind = "Images"
         spec_type = "images"
         for item in data:
-            helm_url = None
-            url = item["repoURL"] + "/index.yaml"
-            text = await download_file(url)
-            entries = text.decode("utf-8")
-            index_data = yaml.safe_load(entries)
-            chart_name = item["name"]
-            # Find chart in entries
-            if chart_name not in index_data.get('entries', {}):
-                raise ValueError(f"Chart '{chart_name}' not found in index")
-            # Get all versions
-            versions = index_data['entries'][chart_name]
-            # replace {version} if exist
-            item["version"] = item["version"].format(version=tag.replace("-", "+"))
-            for version in versions:
-                if version['version'] == item['version']:
-                    for helm_url in version['urls']:
-                        if helm_url.endswith(".tgz"):
-                            helm_url = item["repoURL"] + "/" + helm_url
-                            tgz_data = await download_file(helm_url)
-                            extracted = extract_tgz_in_memory(tgz_data)
-                            images = []
-                            tags = []
-                            pairs = []
-                            for filename, content in extracted.items():
-                                # if filename.endswith("values.yaml"):
-                                tmp_images, tmp_tags = find_image_tag_pairs(content)
-                                images = images + tmp_images
-                                tags = tags + tmp_tags
-                            images = list(dict.fromkeys(images))
-                            tags = list(dict.fromkeys(tags))
-                            # create all images with check
-                            for image in images:
-                                latest_tags = tags.copy()
-                                for tmp_tags in latest_tags:
-                                    repo_exits = await check_docker_image_exists(f"{image}:{tmp_tags}")
-                                    if repo_exits:
-                                        pairs.append(f"{image}:{tmp_tags}")
-                                    else:
-                                        tags.remove(tmp_tags)
-                            pairs = list(dict.fromkeys(pairs))
-                            for result in pairs:
-                                spec_data.append({"name": result})
+            chart = await helmClient.get_chart(
+                item["name"],
+                repo=item["repoURL"],
+                version=item["version"].format(version=tag.replace("-", "+"))
+            )
+            template = await helmClient.template_resources(chart, release_name=item["name"], include_crds=True, no_hooks=False)
+            for file in template:
+                images = find_images(file)
+                for image in images:
+                    spec_data.append({"name": image})
 
     return {
         "apiVersion": "content.hauler.cattle.io/v1alpha1",
