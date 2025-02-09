@@ -1,11 +1,18 @@
+import io
+import os
 import re
 import gzip
 import tarfile
 from io import BytesIO
 import json
+from typing import BinaryIO
+
 import yaml
 from hashlib import sha256
 import logging
+
+from minio import Minio
+import uvicorn
 import aiohttp
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import Response
@@ -101,13 +108,35 @@ PROJECTS = {
     }
 }
 
+OSClient = Minio(os.getenv("MINIO_ENDPOINT", "storage.yandexcloud.net"),
+    access_key=os.getenv("MINIO_ACCESS_KEY"),
+    secret_key=os.getenv("MINIO_SECRET_KEY"),
+    secure=os.getenv("MINIO_SECURE", True),
+)
 
-async def on_fetch(request, env):
-    import asgi
-    logging.basicConfig(level=logging.DEBUG)
-    return await asgi.fetch(app, request, env)
+OSBucketName = os.getenv("MINIO_BUCKET_NAME", "carbide")
 
+# Make the bucket if it doesn't exist.
+def check_bucket(bucket):
+    found = OSClient.bucket_exists(bucket)
+    if not found:
+        logging.error(f"Created bucket {bucket}")
+    else:
+        logging.info(f"Bucket {bucket}already exists")
 
+def set_object(key, value):
+    return OSClient.put_object(
+            bucket_name=OSBucketName,
+            object_name=key,
+            data=io.BytesIO(value),
+            length=len(value),
+    )
+
+def get_object(key):
+    return OSClient.get_object(
+            bucket_name=OSBucketName,
+            object_name=key
+    )
 app = FastAPI()
 
 
@@ -329,8 +358,7 @@ async def root():
 
 
 @app.get("/v2/hauler/{repo}-manifest.yaml/manifests/{tag}")
-async def get_manifest(repo: str, tag: str, req: Request):
-    env = req.scope["env"]
+async def get_manifest(repo: str, tag: str):
     if tag.startswith("sha256"):
         raise HTTPException(status_code=404, detail="Manifest not found")
     # check if project exist
@@ -344,7 +372,7 @@ async def get_manifest(repo: str, tag: str, req: Request):
         raise HTTPException(status_code=404, detail="Manifest not found")
     body = get_hauler(json_array)
     blob_id = "sha256:" + sha256(body.encode('utf-8')).hexdigest()
-    await env.CARBIDE.put(repo + "_" + blob_id, body)
+    set_object(repo + "_" + blob_id, body.encode('utf-8'))
     manifest_data = {
         "schemaVersion": 2,
         "mediaType": "application/vnd.oci.image.manifest.v1+json",
@@ -373,10 +401,15 @@ async def get_manifest(repo: str, tag: str, req: Request):
 
 
 @app.get("/v2/hauler/{repo}-manifest.yaml/blobs/{blob_id}")
-async def get_blob(repo: str, blob_id: str, req: Request):
-    env = req.scope["env"]
-    body = await env.CARBIDE.get(repo + "_" + blob_id)
+async def get_blob(repo: str, blob_id: str):
+    body = get_object(repo + "_" + blob_id)
     return Response(
-        content=body,
+        content=body.read(),
         media_type = "application/x-yaml"
     )
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.DEBUG)
+    check_bucket(OSBucketName)
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8888")))
