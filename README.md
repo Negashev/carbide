@@ -1,6 +1,6 @@
 # carbide
 
-registry is `ghcr.io/negashev/carbide`
+registry is `bbaue9sa2q4dsifllkti.containers.yandexcloud.net`
 
 usage:
 ```bash
