@@ -1,0 +1,8 @@
+name = "carbide"
+main = "src/carbide.py"
+compatibility_flags = ["python_workers"]
+compatibility_date = "2025-02-08"
+
+kv_namespaces = [
+    { binding = "CARBIDE", id = "<YOUR_KV_NAMESPACE_ID>" }
+]
