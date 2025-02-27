@@ -1,18 +1,27 @@
 import io
 import os
 import json
-from itertools import chain
+import pathlib
 
 import yaml
 from hashlib import sha256
 import logging
 
-from pyhelm3 import Client as Helm3Client
+from pyhelm3 import Client as Helm3Client, Chart, SafeLoader, Command, mergeconcat
 from minio import Minio
 import uvicorn
 import aiohttp
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import Response
+import typing as t
+from typing_extensions import Annotated
+from pydantic import (
+    Field,
+    DirectoryPath,
+    FilePath,
+    HttpUrl,
+)
+
 
 PROJECTS = {
     "k3s": {
@@ -111,7 +120,121 @@ OSClient = Minio(os.getenv("MINIO_ENDPOINT", "storage.yandexcloud.net"),
     secure=os.getenv("MINIO_SECURE", True),
 )
 
-helmClient = Helm3Client()
+# https://github.com/azimuth-cloud/pyhelm3/issues/2#issuecomment-2514129777
+Name = Annotated[str, Field(pattern=r"^[a-z0-9-]+$")]
+OCIPath = Annotated[str, Field(pattern=r"oci:\/\/*")]
+
+class OCIChart(Chart):
+    ref: t.Union[DirectoryPath, FilePath, HttpUrl, OCIPath, Name] = Field(
+        ...,
+    )
+    repo: t.Optional[OCIPath] = Field(None, description = "The repository URL.")
+
+async def template_oci(
+    self,
+    release_name: str,
+    chart_ref: t.Union[pathlib.Path, str],
+    values: t.Optional[t.Dict[str, t.Any]] = None,
+    *,
+    devel: bool = False,
+    include_crds: bool = False,
+    is_upgrade: bool = False,
+    namespace: t.Optional[str] = None,
+    no_hooks: bool = False,
+    repo: t.Optional[str] = None,
+    version: t.Optional[str] = None) -> t.Iterable[t.Dict[str, t.Any]]:
+    """
+    Renders the chart templates and returns the resources.
+    """
+    command = [
+        "template",
+        release_name,
+        "--include-crds" if include_crds else "--skip-crds",
+        # We send the values in on stdin
+        "--values", "-",
+    ]
+    if devel:
+        command.append("--devel")
+    if self._insecure_skip_tls_verify:
+        command.append("--insecure-skip-tls-verify")
+    if is_upgrade:
+        command.append("--is-upgrade")
+    if namespace:
+        command.extend(["--namespace", namespace])
+    if no_hooks:
+        command.append("--no-hooks")
+    if repo:
+        command.extend([repo + "/" + chart_ref])
+    if version:
+        command.extend(["--version", version])
+    return yaml.load_all(
+        await self.run(command, json.dumps(values or {}).encode()),
+        Loader = SafeLoader
+    )
+async def show_chart_oci(
+    self,
+    chart_ref: t.Union[pathlib.Path, str],
+    *,
+    devel: bool = False,
+    repo: t.Optional[str] = None,
+    version: t.Optional[str] = None
+) -> t.Dict[str, t.Any]:
+    """
+    Returns the contents of Chart.yaml for the specified chart.
+    """
+    command = ["show", "chart"]
+    if devel:
+        command.append("--devel")
+    if self._insecure_skip_tls_verify:
+        command.append("--insecure-skip-tls-verify")
+    if repo:
+        command.extend([repo + "/" + chart_ref])
+    if version:
+        command.extend(["--version", version])
+    return yaml.load(await self.run(command), Loader = SafeLoader)
+
+async def get_chart_oci(self, chart_ref, *, devel=False, repo=None, version=None):
+    metadata = await self._command.show_chart_oci(
+        chart_ref,
+        devel=devel,
+        repo=repo,
+        version=version
+    )
+
+    return OCIChart(
+        _command=self._command,
+        ref=chart_ref,
+        repo=repo,
+        metadata=metadata
+    )
+
+async def template_resources_oci(
+    self,
+    chart: Chart,
+    release_name: str,
+    *values: t.Dict[str, t.Any],
+    include_crds: bool = False,
+    is_upgrade: bool = False,
+    namespace: t.Optional[str] = None,
+    no_hooks: bool = False) -> t.Iterable[t.Dict[str, t.Any]]:
+    return await self._command.template_oci(
+        release_name,
+        chart.ref,
+        mergeconcat(*values) if values else None,
+        include_crds = include_crds,
+        is_upgrade = is_upgrade,
+        namespace = namespace,
+        no_hooks = no_hooks,
+        repo = chart.repo,
+        version = chart.metadata.version
+    )
+# Monkey patch the get_chart method of the Client class
+CommandWithOCI = Command
+CommandWithOCI.show_chart_oci = show_chart_oci
+CommandWithOCI.template_oci = template_oci
+Helm3Client.get_chart_oci = get_chart_oci
+Helm3Client.template_resources_oci = template_resources_oci
+helmClient = Helm3Client(CommandWithOCI())
 
 OSBucketName = os.getenv("MINIO_BUCKET_NAME", "carbide")
 
@@ -166,7 +289,7 @@ async def download_file(url: str) -> bytes:
                 raise HTTPException(status_code=404, detail=f"File not found: {url}")
             return await response.read()
 
-async def generate_json(name, kind, data, tag, parse_tag=True):
+async def generate_json(name, kind, data, tag, parse_tag=True, helm_type="chart"):
     spec_type = kind.lower()
     spec_name = name
     spec_data = []
@@ -197,19 +320,29 @@ async def generate_json(name, kind, data, tag, parse_tag=True):
         kind = "Images"
         spec_type = "images"
         for item in data:
-            chart = await helmClient.get_chart(
-                item["name"],
-                repo=item["repoURL"],
-                version=item["version"].format(version=tag.replace("-", "+"))
-            )
-            template = await helmClient.template_resources(chart, release_name=item["name"], include_crds=True, no_hooks=False)
+            if helm_type == "chart":
+                chart = await helmClient.get_chart(
+                    item["name"],
+                    repo=item["repoURL"],
+                    version=item["version"].format(version=tag.replace("-", "+"))
+                )
+                template = await helmClient.template_resources(chart, release_name=item["name"], include_crds=True,
+                                                               no_hooks=False)
+            else:
+                chart = await helmClient.get_chart_oci(
+                    item["name"],
+                    repo=item["repoURL"],
+                    version=item["version"].format(version=tag.replace("-", "+"))
+                )
+                template = await helmClient.template_resources_oci(chart, release_name=item["name"], include_crds=True, no_hooks=False)
             for file in template:
                 images = find_images(file)
                 for image in images:
                     spec_data.append({"name": image})
+        spec_data = [dict(t) for t in {tuple(d.items()) for d in spec_data}]
 
     return {
-        "apiVersion": "content.hauler.cattle.io/v1alpha1",
+        "apiVersion": "content.hauler.cattle.io/v1",
         "kind": kind,
         "metadata": {
             "name": f"{spec_name}-airgap-{spec_type}"
@@ -227,8 +360,8 @@ def get_hauler(json_array):
     data = '---\n'.join(yaml_data)
     return data
 
-def parse_helm_url(helm_url_with_version):
-        repo = helm_url_with_version[len("chart--"):]
+def parse_helm_url(helm_url_with_version, repotype):
+        repo = helm_url_with_version[len(f"{repotype}--"):]
         # get last element of url
         repoUrlSplit = repo.split("--")
         version = repoUrlSplit[-1]
@@ -248,21 +381,27 @@ async def get_manifest(repo: str, tag: str):
     json_array = []
     if tag.startswith("sha256"):
         raise  HTTPException(status_code=404, detail="Manifest not found")
-    elif tag.startswith("chart--"):
-        helmRepoUrl, version = parse_helm_url(tag)
+    elif tag.startswith("chart--") or tag.startswith("oci--"):
+        if tag.startswith("chart--"):
+            repotype = "chart"
+            storetype = "http://"
+        else:
+            repotype = "oci"
+            storetype = "oci://"
+        helmRepoUrl, version = parse_helm_url(tag, repotype)
         json_data = await generate_json(repo, "Charts",
             [{
-                "repoURL": "http://" + helmRepoUrl,
+                "repoURL": storetype + helmRepoUrl,
                 "name": repo,
                 "version": version
-            }], version, False)
+            }], version, False, helm_type=repotype)
         json_array.append(json_data)
         json_data = await generate_json(repo, "Charts-images",
             [{
-                "repoURL": "http://" + helmRepoUrl,
+                "repoURL": storetype + helmRepoUrl,
                 "name": repo,
                 "version": version
-            }], version, False)
+            }], version, False, helm_type=repotype)
         json_array.append(json_data)
     else:
         if repo in PROJECTS.keys():
